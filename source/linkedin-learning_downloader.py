@@ -5,6 +5,7 @@ Created on Sun Oct 27 21:11:25 2019
 @author: Aleh
 """
 
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 #from selenium.common.exceptions import TimeoutException
@@ -17,10 +18,18 @@ import time
 from urllib.request import urlretrieve
 import codecs
 import argparse
+import re
 
 
 timeout_sec = 5
 
+
+def get_valid_filename(s):
+    return re.sub(r'[^-\w\s.]', '', s).strip()
+
+def check_directory(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
 
 def save_html(html, file_path):
     with codecs.open(file_path, "w", "utf-8") as file_object:
@@ -47,10 +56,10 @@ def file_name_from_url(url):
 
 def download_file(url, save_path):
     if os.path.exists(save_path):
-        print(f"{save_path} was already downloaded")
+        print(f"'{file_name_from_url(save_path)}' was already downloaded")
     else:
         urlretrieve(url, save_path)
-        print(f"{save_path} is saved")
+        print(f"'{file_name_from_url(save_path)}' is saved")
 
 
 class Arguments:
@@ -113,6 +122,35 @@ def get_logged_in_driver(driver_path, user_email, user_password, login_link):
     return driver
 
 
+def get_chapters(html):
+    chapters = []
+    try:
+        bsObj = BeautifulSoup(html, 'html.parser')
+        chapter_items = bsObj.find('ul', {'class':"course-toc__list"}).findAll('li')
+        for chapter_item in chapter_items:
+            chapter = {}
+            chapter['header'] = chapter_item.find('div', {'class':"course-chapter__header"}).text.strip()
+            items = chapter_item.find('div', {'class':"course-chapter__items"}).findAll('a', {'data-control-name':"course_video_route"})
+            chapter['items'] = []
+            for item in items:
+                duration = item.find('span', {'class':"duration"})
+                if duration:
+                    video = {}
+                    href = item['href']
+                    if href.startswith('/learning'):
+                        href = 'https://www.linkedin.com' + href
+                    video['ref'] = href
+                    video['title'] = duration.parent.parent.find(text=True).strip()
+                    video['duration'] = duration.text.strip()
+                    chapter['items'].append(video)
+            chapters.append(chapter)
+    except KeyboardInterrupt:
+        raise
+    except:
+        print(f"\nException in get_chapters:", sys.exc_info()[0])
+    return chapters
+
+
 class Downloader():
     def __init__(self, web_driver):
         self.autoplay_postfix = "?autoplay=true"
@@ -131,15 +169,16 @@ class Downloader():
                 time.sleep(timeout_sec)
 
                 save_dir = f"{self.directory_to_store}/{course_url.split('/')[-1]}"
-                if not os.path.exists(save_dir):
-                    os.makedirs(save_dir)
+                check_directory(save_dir)
 
+                chapters = None
                 tabs = driver.find_elements_by_tag_name('artdeco-tab')
                 for tab in tabs:
                     if content_tab in tab.get_attribute('innerHTML'):
                         tab.click()
                         wait_for_js(driver)
-                        save_html(driver.page_source, f"{save_dir}/info.html")
+                        save_html(driver.page_source, f"{save_dir}/{content_tab}.html")
+                        chapters = get_chapters(driver.page_source)
                     elif exersise_tab in tab.get_attribute('innerHTML'):
                         tab.click()
                         wait_for_js(driver)
@@ -157,8 +196,7 @@ class Downloader():
 
                 if exercise_refs:
                     exersice_dir = f"{save_dir}/{exersise_tab}"
-                    if not os.path.exists(exersice_dir):
-                        os.makedirs(exersice_dir)
+                    check_directory(exersice_dir)
 
                     for exercise_url in exercise_refs:
                         try:
@@ -173,30 +211,60 @@ class Downloader():
                 else:
                     print(f"Warning! {file_name_from_url(course_url)} does't contains {exersise_tab}")
 
-                if vid_refs:
-                    for href in vid_refs:
-                        try:
-                            driver.get(href)
-                            time.sleep(timeout_sec)
-                            vid_elem = driver.find_element_by_tag_name('video')
-                            vid_url = vid_elem.get_attribute('src')
-                            #print('video url:', vid_url)
-                            vid_name = file_name_from_url(vid_url)
-                            save_path = f"{save_dir}/{vid_name}"
-                            download_file(vid_url, save_path)
-                        except KeyboardInterrupt:
-                            raise
-                        except:
-                            print(f"\nException during processing {href}:", sys.exc_info()[0])
+                if chapters:
+                    for idx, chapter in enumerate(chapters):
+                        vid_dir_name = get_valid_filename(chapter['header'])
+                        if not str.isdigit(vid_dir_name[0]):
+                            vid_dir_name = f"{idx}. {vid_dir_name}"
+                            print(f"chapter header to folder name: '{chapter['header']}' -> '{vid_dir_name}'")
+                        vid_dir_path = f"{save_dir}/{vid_dir_name}"
+                        check_directory(vid_dir_path)
 
-                    save_html(driver.page_source, f"{save_dir}/info.html")
+                        for vid_idx, vid_item in enumerate(chapter['items']):
+                            try:
+                                driver.get(vid_item['ref'])
+                                wait_for_js(driver)
+                                time.sleep(timeout_sec)
+                                vid_elem = driver.find_element_by_tag_name('video')
+                                vid_url = vid_elem.get_attribute('src')
+                                file_name = get_valid_filename(f"{vid_item['title']}.mp4")
+                                if not str.isdigit(file_name[0]):
+                                    file_name = f"{str(vid_idx+1).zfill(2)}. {file_name}"
+                                save_path = f"{vid_dir_path}/{file_name}"
+                                download_file(vid_url, save_path)
+                            except KeyboardInterrupt:
+                                raise
+                            except:
+                                print(f"\nException during processing {href}:", sys.exc_info()[0])
+
+                    save_html(driver.page_source, f"{save_dir}/{content_tab}.html")
                 else:
                     print(f"Warning! {file_name_from_url(course_url)} does't contains {content_tab}")
+
+# v0.1 video saving
+#                if vid_refs:
+#                    for href in vid_refs:
+#                        try:
+#                            driver.get(href)
+#                            time.sleep(timeout_sec)
+#                            vid_elem = driver.find_element_by_tag_name('video')
+#                            vid_url = vid_elem.get_attribute('src')
+#                            #print('video url:', vid_url)
+#                            vid_name = file_name_from_url(vid_url)
+#                            save_path = f"{save_dir}/{vid_name}"
+#                            download_file(vid_url, save_path)
+#                        except KeyboardInterrupt:
+#                            raise
+#                        except:
+#                            print(f"\nException during processing {href}:", sys.exc_info()[0])
+#
+#                    save_html(driver.page_source, f"{save_dir}/info.html")
+#                else:
+#                    print(f"Warning! {file_name_from_url(course_url)} does't contains {content_tab}")
             except KeyboardInterrupt:
                 raise
             except:
                 print(f"\nException during processing {course_url}:", sys.exc_info()[0])
-
 
 if __name__ == '__main__':
     cmdline_args = Arguments()
