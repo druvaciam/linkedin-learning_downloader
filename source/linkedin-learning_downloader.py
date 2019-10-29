@@ -18,7 +18,7 @@ from urllib.request import urlretrieve
 import codecs
 import argparse
 
-timeout_sec = 8
+timeout_sec = 5
 
 def save_html(html, file_path):
     with codecs.open(file_path, "w", "utf-8") as file_object:
@@ -45,7 +45,7 @@ parser.add_argument('-driver', '-geckodriver', help="full geckodriver.exe path")
 parser.add_argument('--courses', nargs='+', help="linkedin-learning courses' links to download")
 
 args = parser.parse_args()
-print(args)
+print('command line arguments:', args)
 
 
 autoplay_postfix = "?autoplay=true"
@@ -58,7 +58,7 @@ base_dir = args.dir.rstrip('/') # 'g:/usiakaje/linkedin-learning/'
 geckodriver_path = args.driver # r'g:\prohi\geckodriver.exe'
 
 courses = args.courses # ['https://www.linkedin.com/learning/c-plus-plus-design-patterns-creational']
-print("courses:", courses)
+print('courses to download:', courses)
 
 
 driver = webdriver.Firefox(executable_path = geckodriver_path)
@@ -81,7 +81,6 @@ input_password = driver.find_element_by_id('password')
 input_password.send_keys(user_password)
 input_password.send_keys(Keys.RETURN)
 wait_for_js(driver)
-
 time.sleep(timeout_sec)
 
 for course_url in courses:
@@ -95,13 +94,15 @@ for course_url in courses:
         if not os.path.exists(exersice_dir):
             os.makedirs(exersice_dir)
 
-        save_html(driver.page_source, f"{save_dir}/info.html")
-
         tabs = driver.find_elements_by_tag_name('artdeco-tab')
         for tab in tabs:
-            if 'Exercise Files' in tab.get_attribute('innerHTML'):
+            if 'Contents' in tab.get_attribute('innerHTML'):
                 tab.click()
-                time.sleep(timeout_sec)
+                wait_for_js(driver)
+                save_html(driver.page_source, f"{save_dir}/info.html")
+            elif 'Exercise Files' in tab.get_attribute('innerHTML'):
+                tab.click()
+                wait_for_js(driver)
                 break
 
         elemets_a = driver.find_elements_by_tag_name('a')
@@ -116,11 +117,14 @@ for course_url in courses:
 
         for exercise_url in exercise_refs:
             try:
-                print('exercise url:', exercise_url)
+                #print('exercise url:', exercise_url)
                 exercise_name = exercise_url.split('/')[-1].split('?')[0]
                 save_path = f"{exersice_dir}/{exercise_name}"
-                urlretrieve(exercise_url, save_path)
-                print(f"{save_path} is saved")
+                if os.path.exists(save_path):
+                    print(f"{save_path} was already downloaded")
+                else:
+                    urlretrieve(exercise_url, save_path)
+                    print(f"{save_path} is saved")
             except KeyboardInterrupt:
                 raise
             except:
@@ -132,18 +136,24 @@ for course_url in courses:
                 time.sleep(timeout_sec)
                 vid_elem = driver.find_element_by_tag_name('video')
                 vid_url = vid_elem.get_attribute('src')
-                print('video url:', vid_url)
+                #print('video url:', vid_url)
                 vid_name = vid_url.split('/')[-1].split('?')[0]
                 save_path = f"{save_dir}/{vid_name}"
-                urlretrieve(vid_url, save_path)
-                print(f"{save_path} is saved")
+                if os.path.exists(save_path):
+                    print(f"{save_path} was already downloaded")
+                else:
+                    urlretrieve(vid_url, save_path)
+                    print(f"{save_path} is saved")
             except KeyboardInterrupt:
                 raise
             except:
                 print(f"\nException during processing {href}:", sys.exc_info()[0])
+
+        save_html(driver.page_source, f"{save_dir}/info.html")
     except KeyboardInterrupt:
         raise
     except:
         print(sys.exc_info()[0])
 
+print('finish')
 driver.quit()
