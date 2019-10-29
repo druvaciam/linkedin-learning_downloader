@@ -222,15 +222,19 @@ class Downloader():
 
                         for vid_idx, vid_item in enumerate(chapter['items']):
                             try:
+                                file_name = get_valid_filename(f"{vid_item['title']}.mp4")
+                                if not str.isdigit(file_name[0]):
+                                    file_name = f"{str(vid_idx+1).zfill(2)}. {file_name}"
+                                save_path = f"{vid_dir_path}/{file_name}"
+                                if os.path.exists(save_path):
+                                    print(f"'{vid_dir_name}/{file_name}' was already downloaded")
+                                    continue
+
                                 driver.get(vid_item['ref'])
                                 wait_for_js(driver)
                                 time.sleep(timeout_sec)
                                 vid_elem = driver.find_element_by_tag_name('video')
                                 vid_url = vid_elem.get_attribute('src')
-                                file_name = get_valid_filename(f"{vid_item['title']}.mp4")
-                                if not str.isdigit(file_name[0]):
-                                    file_name = f"{str(vid_idx+1).zfill(2)}. {file_name}"
-                                save_path = f"{vid_dir_path}/{file_name}"
                                 download_file(vid_url, save_path)
                             except KeyboardInterrupt:
                                 raise
