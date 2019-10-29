@@ -18,11 +18,17 @@ from urllib.request import urlretrieve
 import codecs
 import argparse
 
+
+# global fields
 timeout_sec = 5
+autoplay_postfix = "?autoplay=true"
+login_link = 'https://www.linkedin.com/uas/login?fromSignIn=true&trk=learning&_l=en_US&uno_session_redirect=https%3A%2F%2Fwww.linkedin.com%2Flearning%2F%3Ftrk%3Ddefault_guest_learning&session_redirect=%2Flearning%2FloginRedirect.html&is_enterprise_authed='
+
 
 def save_html(html, file_path):
     with codecs.open(file_path, "w", "utf-8") as file_object:
         file_object.write(html)
+
 
 def wait_for_js(driver):
     wait = WebDriverWait(driver, timeout_sec)
@@ -37,123 +43,150 @@ def wait_for_js(driver):
     except:
         pass
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-email', '-login', help="user's linkedin login (email)")
-parser.add_argument('-password', '-p', help="user's linkedin password")
-parser.add_argument('-dir', '-folder', '-directory', help="directory to store content")
-parser.add_argument('-driver', '-geckodriver', help="full geckodriver.exe path")
-parser.add_argument('--courses', nargs='+', help="linkedin-learning courses' links to download")
 
-args = parser.parse_args()
-print('command line arguments:', args)
+def file_name_from_url(url):
+    return url.split('/')[-1].split('?')[0]
 
 
-autoplay_postfix = "?autoplay=true"
-login_link = 'https://www.linkedin.com/uas/login?fromSignIn=true&trk=learning&_l=en_US&uno_session_redirect=https%3A%2F%2Fwww.linkedin.com%2Flearning%2F%3Ftrk%3Ddefault_guest_learning&session_redirect=%2Flearning%2FloginRedirect.html&is_enterprise_authed='
-
-user_email = args.email
-user_password = args.password
-
-base_dir = args.dir.rstrip('/') # 'g:/usiakaje/linkedin-learning/'
-geckodriver_path = args.driver # r'g:\prohi\geckodriver.exe'
-
-courses = args.courses # ['https://www.linkedin.com/learning/c-plus-plus-design-patterns-creational']
-print('courses to download:', courses)
+def download_file(url, save_path):
+    if os.path.exists(save_path):
+        print(f"{save_path} was already downloaded")
+    else:
+        urlretrieve(url, save_path)
+        print(f"{save_path} is saved")
 
 
-driver = webdriver.Firefox(executable_path = geckodriver_path)
-driver.set_page_load_timeout(50)
-driver.maximize_window()
+class Arguments:
+    def __init__(self):
+        self.parser = argparse.ArgumentParser()
+        self.parser.add_argument('-email', '-login', help="user's linkedin login (email)")
+        self.parser.add_argument('-password', '-p', help="user's linkedin password")
+        self.parser.add_argument('-dir', '-folder', '-directory', help="directory to store content")
+        self.parser.add_argument('-driver', '-geckodriver', help="full geckodriver.exe path")
+        self.parser.add_argument('--courses', nargs='+', help="linkedin-learning courses' links to download")
+        self.args = self.parser.parse_args()
 
-#driver.get("https://www.linkedin.com/learning/login?redirect=https%3A%2F%2Fwww.linkedin.com%2Flearning%2F%3Ftrk%3Ddefault_guest_learning&trk=sign_in")
-driver.get(login_link)
-wait_for_js(driver)
+    def get_driver_path(self):
+        if self.args.driver:
+            return self.args.driver
+        return 'geckodriver.exe' # should be in the same folder as the script
 
-try:
-    wait = WebDriverWait(driver, timeout_sec)
-    wait.until(EC.element_to_be_clickable((By.ID, 'username')))
-except:
-    print(sys.exc_info()[0])
+    def get_user_email(self):
+        if not self.args.email:
+            raise ValueError("-email or -login command line argument should be provided")
+        return self.args.email
 
-input_name = driver.find_element_by_id('username')
-input_name.send_keys(user_email)
-input_password = driver.find_element_by_id('password')
-input_password.send_keys(user_password)
-input_password.send_keys(Keys.RETURN)
-wait_for_js(driver)
-time.sleep(timeout_sec)
+    def get_user_password(self):
+        if not self.args.password:
+            raise ValueError("-p or -password command line argument should be provided")
+        return self.args.password
 
-for course_url in courses:
+    def get_content_derectory(self):
+        if self.args.dir:
+            return self.args.dir.replace('\\','/').rstrip('/')
+        return ''
+
+    def get_courses(self):
+        if self.args.courses:
+            return self.args.courses
+        return []
+
+
+if __name__ == '__main__':
+    cmdline_args = Arguments()
+
+    user_password = cmdline_args.get_user_password()
+    base_dir = cmdline_args.get_content_derectory()
+    user_email = cmdline_args.get_user_email()
+    courses = cmdline_args.get_courses() # ['https://www.linkedin.com/learning/c-plus-plus-design-patterns-creational']
+    print('courses to download:', courses)
+
+
+    driver = webdriver.Firefox(executable_path = cmdline_args.get_driver_path())
+    driver.set_page_load_timeout(50)
+    driver.maximize_window()
+
+    #driver.get("https://www.linkedin.com/learning/login?redirect=https%3A%2F%2Fwww.linkedin.com%2Flearning%2F%3Ftrk%3Ddefault_guest_learning&trk=sign_in")
+    driver.get(login_link)
+    wait_for_js(driver)
+
     try:
-        driver.get(course_url)
-        wait_for_js(driver)
-        time.sleep(timeout_sec)
-
-        save_dir = f"{base_dir}/{course_url.split('/')[-1]}"
-        exersice_dir = f"{save_dir}/Exercice Files"
-        if not os.path.exists(exersice_dir):
-            os.makedirs(exersice_dir)
-
-        tabs = driver.find_elements_by_tag_name('artdeco-tab')
-        for tab in tabs:
-            if 'Contents' in tab.get_attribute('innerHTML'):
-                tab.click()
-                wait_for_js(driver)
-                save_html(driver.page_source, f"{save_dir}/info.html")
-            elif 'Exercise Files' in tab.get_attribute('innerHTML'):
-                tab.click()
-                wait_for_js(driver)
-                break
-
-        elemets_a = driver.find_elements_by_tag_name('a')
-        vid_refs = []
-        exercise_refs = []
-        for a in elemets_a:
-            href = a.get_attribute('href')
-            if course_url in href and autoplay_postfix in href:
-                vid_refs.append(href)
-            elif '/exercises/' in href:
-                exercise_refs.append(href)
-
-        for exercise_url in exercise_refs:
-            try:
-                #print('exercise url:', exercise_url)
-                exercise_name = exercise_url.split('/')[-1].split('?')[0]
-                save_path = f"{exersice_dir}/{exercise_name}"
-                if os.path.exists(save_path):
-                    print(f"{save_path} was already downloaded")
-                else:
-                    urlretrieve(exercise_url, save_path)
-                    print(f"{save_path} is saved")
-            except KeyboardInterrupt:
-                raise
-            except:
-                print(f"\nException during processing {href}:", sys.exc_info()[0])
-
-        for href in vid_refs:
-            try:
-                driver.get(href)
-                time.sleep(timeout_sec)
-                vid_elem = driver.find_element_by_tag_name('video')
-                vid_url = vid_elem.get_attribute('src')
-                #print('video url:', vid_url)
-                vid_name = vid_url.split('/')[-1].split('?')[0]
-                save_path = f"{save_dir}/{vid_name}"
-                if os.path.exists(save_path):
-                    print(f"{save_path} was already downloaded")
-                else:
-                    urlretrieve(vid_url, save_path)
-                    print(f"{save_path} is saved")
-            except KeyboardInterrupt:
-                raise
-            except:
-                print(f"\nException during processing {href}:", sys.exc_info()[0])
-
-        save_html(driver.page_source, f"{save_dir}/info.html")
-    except KeyboardInterrupt:
-        raise
+        wait = WebDriverWait(driver, timeout_sec)
+        wait.until(EC.element_to_be_clickable((By.ID, 'username')))
     except:
         print(sys.exc_info()[0])
 
-print('finish')
-driver.quit()
+    input_name = driver.find_element_by_id('username')
+    input_name.send_keys(user_email)
+    input_password = driver.find_element_by_id('password')
+    input_password.send_keys(user_password)
+    input_password.send_keys(Keys.RETURN)
+    wait_for_js(driver)
+    time.sleep(timeout_sec)
+
+    for course_url in courses:
+        try:
+            driver.get(course_url)
+            wait_for_js(driver)
+            time.sleep(timeout_sec)
+
+            save_dir = f"{base_dir}/{course_url.split('/')[-1]}"
+            exersice_dir = f"{save_dir}/Exercice Files"
+            if not os.path.exists(exersice_dir):
+                os.makedirs(exersice_dir)
+
+            tabs = driver.find_elements_by_tag_name('artdeco-tab')
+            for tab in tabs:
+                if 'Contents' in tab.get_attribute('innerHTML'):
+                    tab.click()
+                    wait_for_js(driver)
+                    save_html(driver.page_source, f"{save_dir}/info.html")
+                elif 'Exercise Files' in tab.get_attribute('innerHTML'):
+                    tab.click()
+                    wait_for_js(driver)
+                    break
+
+            elemets_a = driver.find_elements_by_tag_name('a')
+            vid_refs = []
+            exercise_refs = []
+            for a in elemets_a:
+                href = a.get_attribute('href')
+                if course_url in href and autoplay_postfix in href:
+                    vid_refs.append(href)
+                elif '/exercises/' in href:
+                    exercise_refs.append(href)
+
+            for exercise_url in exercise_refs:
+                try:
+                    #print('exercise url:', exercise_url)
+                    exercise_name = file_name_from_url(exercise_url)
+                    save_path = f"{exersice_dir}/{exercise_name}"
+                    download_file(exercise_url, save_path)
+                except KeyboardInterrupt:
+                    raise
+                except:
+                    print(f"\nException during processing {href}:", sys.exc_info()[0])
+
+            for href in vid_refs:
+                try:
+                    driver.get(href)
+                    time.sleep(timeout_sec)
+                    vid_elem = driver.find_element_by_tag_name('video')
+                    vid_url = vid_elem.get_attribute('src')
+                    #print('video url:', vid_url)
+                    vid_name = file_name_from_url(vid_url)
+                    save_path = f"{save_dir}/{vid_name}"
+                    download_file(vid_url, save_path)
+                except KeyboardInterrupt:
+                    raise
+                except:
+                    print(f"\nException during processing {href}:", sys.exc_info()[0])
+
+            save_html(driver.page_source, f"{save_dir}/info.html")
+        except KeyboardInterrupt:
+            raise
+        except:
+            print(f"\nException during processing {course_url}:", sys.exc_info()[0])
+
+    print('finish')
+    driver.quit()
