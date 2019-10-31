@@ -19,17 +19,22 @@ from urllib.request import urlretrieve
 import codecs
 import argparse
 import re
+import json
 
 
 timeout_sec = 5
 
 
 def get_valid_filename(s):
-    return re.sub(r'[^-\w\s.]', '', s).strip()
+    return re.sub(r'[^-\w\s.,]', '', s).strip()
+
+def file_name_from_url(url):
+    return url.split('/')[-1].split('?')[0]
 
 def check_directory(path):
     if not os.path.exists(path):
         os.makedirs(path)
+        print(f"'{file_name_from_url(path)}' is created")
 
 def save_html(html, file_path):
     with codecs.open(file_path, "w", "utf-8") as file_object:
@@ -48,10 +53,6 @@ def wait_for_js(driver):
         print("document.readyState == complete")
     except:
         pass
-
-
-def file_name_from_url(url):
-    return url.split('/')[-1].split('?')[0]
 
 
 def download_file(url, save_path):
@@ -151,6 +152,62 @@ def get_chapters(html):
     return chapters
 
 
+def get_raw_subtitles(html):
+    subs = []
+    try:
+        bsObj = BeautifulSoup(html, 'html.parser')
+        vid_name = bsObj.find('span', {'class':"embed-entity__video-title"}).text.strip()
+        for div in bsObj.findAll('div'):
+            if 'data-video-id' in div.attrs:
+                if vid_name in div.text:
+                    # video id like 'urn:li:lyndaVideo:(urn:li:lyndaCourse:5030978,2810951)'
+                    full_id_str = div['data-video-id']
+                    #vid_id = full_id_str.split(',')[-1].strip(')').strip()
+                    break
+
+        for code in bsObj.findAll('code'):
+            try:
+                code_json = json.loads(code.text)
+                if 'included' in code_json:
+                    for item in code_json['included']:
+                        if 'transcriptStartAt' in item and full_id_str in item['$id']:
+                            subs.append(item)
+            except:
+                pass
+        subs.sort(key=lambda x: x['transcriptStartAt'])
+
+    except KeyboardInterrupt:
+        raise
+    except Exception as ex:
+        print(f"\nException in get_subtitles:", sys.exc_info()[0], ex)
+    return subs
+
+
+def sub_format_time_from_ms(time_ms: int):
+    sec, ms = divmod(time_ms, 1000)
+    minutes, sec = divmod(sec, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02}:{minutes:02}:{sec:02}:{ms:03}"
+
+
+def save_subtitles(subs, file_path):
+    lines = []
+    for num, sub in enumerate(subs[:-1], start=1):
+        lines.append(str(num))
+        lines.append(f"{sub_format_time_from_ms(sub['transcriptStartAt'])} --> "
+                        f"{sub_format_time_from_ms(subs[num]['transcriptStartAt'] - 10)}")
+        lines.append(sub['caption'])
+        lines.append('')
+    # last time stamp is special
+    lines.append(f"{len(subs)}")
+    #TODO add video duration instead of hardcoded 5 sec duration
+    lines.append(f"{sub_format_time_from_ms(subs[-1]['transcriptStartAt'])} --> "
+                    f"{sub_format_time_from_ms(subs[-1]['transcriptStartAt'] + 5000)}")
+    lines.append(subs[-1]['caption'])
+    lines.append('')
+
+    save_html('\n'.join(lines), file_path)
+
 class Downloader():
     def __init__(self, web_driver):
         self.autoplay_postfix = "?autoplay=true"
@@ -233,9 +290,17 @@ class Downloader():
                                 driver.get(vid_item['ref'])
                                 wait_for_js(driver)
                                 time.sleep(timeout_sec)
+                                # save video page, can be usefull for later data extration
+                                save_html(driver.page_source, os.path.splitext(save_path)[0] + '.html')
+
                                 vid_elem = driver.find_element_by_tag_name('video')
                                 vid_url = vid_elem.get_attribute('src')
                                 download_file(vid_url, save_path)
+
+                                subs = get_raw_subtitles(driver.page_source)
+                                transcription = ' '.join([sub['caption'] for sub in subs])
+                                save_html(transcription, os.path.splitext(save_path)[0] + '.txt')
+                                save_subtitles(subs, os.path.splitext(save_path)[0] + '.srt')
                             except KeyboardInterrupt:
                                 raise
                             except:
@@ -277,6 +342,8 @@ if __name__ == '__main__':
     user_password = cmdline_args.get_user_password()
     base_dir = cmdline_args.get_content_derectory()
     courses = cmdline_args.get_courses() # ['https://www.linkedin.com/learning/c-plus-plus-design-patterns-creational']
+    courses = list(map(lambda course: course if course.startswith('https:') \
+                       else 'https://www.linkedin.com/learning/' + course, courses))
     print('courses to download:', courses)
 
     # the next link doesn't work with driver
