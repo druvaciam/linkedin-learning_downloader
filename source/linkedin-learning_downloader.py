@@ -20,6 +20,7 @@ import codecs
 import argparse
 import re
 import json
+import traceback
 
 
 timeout_sec = 5
@@ -147,8 +148,9 @@ def get_chapters(html):
             chapters.append(chapter)
     except KeyboardInterrupt:
         raise
-    except:
-        print(f"\nException in get_chapters:", sys.exc_info()[0])
+    except Exception as ex:
+        print(f"\nException in get_chapters:", repr(ex))
+        traceback.print_exc(file=sys.stdout)
     return chapters
 
 
@@ -159,7 +161,7 @@ def get_raw_subtitles(html):
         vid_name = bsObj.find('span', {'class':"embed-entity__video-title"}).text.strip()
         for div in bsObj.findAll('div'):
             if 'data-video-id' in div.attrs:
-                if vid_name in div.text:
+                if vid_name == div.find('span', {'class':"duration"}).parent.parent.find(text=True).strip():
                     # video id like 'urn:li:lyndaVideo:(urn:li:lyndaCourse:5030978,2810951)'
                     full_id_str = div['data-video-id']
                     #vid_id = full_id_str.split(',')[-1].strip(')').strip()
@@ -179,7 +181,8 @@ def get_raw_subtitles(html):
     except KeyboardInterrupt:
         raise
     except Exception as ex:
-        print(f"\nException in get_subtitles:", sys.exc_info()[0], ex)
+        print(f"\nException in get_raw_subtitles:", repr(ex))
+        traceback.print_exc(file=sys.stdout)
     return subs
 
 
@@ -263,8 +266,9 @@ class Downloader():
                             download_file(exercise_url, save_path)
                         except KeyboardInterrupt:
                             raise
-                        except:
-                            print(f"\nException during processing {href}:", sys.exc_info()[0])
+                        except Exception as ex:
+                            print(f"\nException during processing exercise {exercise_url}:", repr(ex))
+                            traceback.print_exc(file=sys.stdout)
                 else:
                     print(f"Warning! {file_name_from_url(course_url)} does't contains {exersise_tab}")
 
@@ -303,8 +307,9 @@ class Downloader():
                                 save_subtitles(subs, os.path.splitext(save_path)[0] + '.srt')
                             except KeyboardInterrupt:
                                 raise
-                            except:
-                                print(f"\nException during processing {href}:", sys.exc_info()[0])
+                            except Exception as ex:
+                                print(f"\nException during processing video {vid_item['ref']}:", repr(ex))
+                                traceback.print_exc(file=sys.stdout)
 
                     save_html(driver.page_source, f"{save_dir}/{content_tab}.html")
                 else:
@@ -332,8 +337,10 @@ class Downloader():
 #                    print(f"Warning! {file_name_from_url(course_url)} does't contains {content_tab}")
             except KeyboardInterrupt:
                 raise
-            except:
-                print(f"\nException during processing {course_url}:", sys.exc_info()[0])
+            except Exception as ex:
+                print(f"\nException during processing course {course_url}:", repr(ex))
+                traceback.print_exc(file=sys.stdout)
+
 
 if __name__ == '__main__':
     cmdline_args = Arguments()
