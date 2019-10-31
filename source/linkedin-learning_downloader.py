@@ -23,11 +23,11 @@ import json
 import traceback
 
 
-timeout_sec = 5
+timeout_sec = 3
 
 
 def get_valid_filename(s):
-    return re.sub(r'[^-\w\s.,]', '', s).strip()
+    return re.sub(r"[^-+\w\s\.,;!%'~#\(\)\[\]\{\}]", '', s).strip()
 
 def file_name_from_url(url):
     return url.split('/')[-1].split('?')[0]
@@ -159,23 +159,29 @@ def get_raw_subtitles(html):
     try:
         bsObj = BeautifulSoup(html, 'html.parser')
         vid_name = bsObj.find('span', {'class':"embed-entity__video-title"}).text.strip()
+        video_id_candidates = []
         for div in bsObj.findAll('div'):
             if 'data-video-id' in div.attrs:
+                # video name equility can be not enough => collect all with appropriate name
                 if vid_name == div.find('span', {'class':"duration"}).parent.parent.find(text=True).strip():
                     # video id like 'urn:li:lyndaVideo:(urn:li:lyndaCourse:5030978,2810951)'
                     full_id_str = div['data-video-id']
                     #vid_id = full_id_str.split(',')[-1].strip(')').strip()
-                    break
+                    video_id_candidates.append(full_id_str)
 
-        for code in bsObj.findAll('code'):
-            try:
-                code_json = json.loads(code.text)
-                if 'included' in code_json:
-                    for item in code_json['included']:
-                        if 'transcriptStartAt' in item and full_id_str in item['$id']:
-                            subs.append(item)
-            except:
-                pass
+        for video_id in video_id_candidates:
+            for code in bsObj.findAll('code'):
+                try:
+                    code_json = json.loads(code.text)
+                    if 'included' in code_json:
+                        for item in code_json['included']:
+                            if 'transcriptStartAt' in item and video_id in item['$id']:
+                                subs.append(item)
+                except:
+                    pass
+            if subs:
+                break;
+
         subs.sort(key=lambda x: x['transcriptStartAt'])
 
     except KeyboardInterrupt:
@@ -226,7 +232,7 @@ class Downloader():
             try:
                 driver.get(course_url)
                 wait_for_js(driver)
-                time.sleep(timeout_sec)
+                #time.sleep(timeout_sec)
 
                 save_dir = f"{self.directory_to_store}/{course_url.split('/')[-1]}"
                 check_directory(save_dir)
@@ -287,13 +293,15 @@ class Downloader():
                                 if not str.isdigit(file_name[0]):
                                     file_name = f"{str(vid_idx+1).zfill(2)}. {file_name}"
                                 save_path = f"{vid_dir_path}/{file_name}"
-                                if os.path.exists(save_path):
+                                sub_save_path = os.path.splitext(save_path)[0] + '.srt'
+                                if os.path.exists(save_path) and os.path.exists(sub_save_path):
                                     print(f"'{vid_dir_name}/{file_name}' was already downloaded")
                                     continue
 
                                 driver.get(vid_item['ref'])
                                 wait_for_js(driver)
-                                time.sleep(timeout_sec)
+                                #time.sleep(timeout_sec)
+
                                 # save video page, can be usefull for later data extration
                                 save_html(driver.page_source, os.path.splitext(save_path)[0] + '.html')
 
@@ -304,7 +312,7 @@ class Downloader():
                                 subs = get_raw_subtitles(driver.page_source)
                                 transcription = ' '.join([sub['caption'] for sub in subs])
                                 save_html(transcription, os.path.splitext(save_path)[0] + '.txt')
-                                save_subtitles(subs, os.path.splitext(save_path)[0] + '.srt')
+                                save_subtitles(subs, sub_save_path)
                             except KeyboardInterrupt:
                                 raise
                             except Exception as ex:
@@ -348,7 +356,7 @@ if __name__ == '__main__':
     user_email = cmdline_args.get_user_email()
     user_password = cmdline_args.get_user_password()
     base_dir = cmdline_args.get_content_derectory()
-    courses = cmdline_args.get_courses() # ['https://www.linkedin.com/learning/c-plus-plus-design-patterns-creational']
+    courses = cmdline_args.get_courses()
     courses = list(map(lambda course: course if course.startswith('https:') \
                        else 'https://www.linkedin.com/learning/' + course, courses))
     print('courses to download:', courses)
