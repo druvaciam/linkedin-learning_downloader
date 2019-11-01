@@ -154,44 +154,6 @@ def get_chapters(html):
     return chapters
 
 
-def get_raw_subtitles(html):
-    subs = []
-    try:
-        bsObj = BeautifulSoup(html, 'html.parser')
-        vid_name = bsObj.find('span', {'class':"embed-entity__video-title"}).text.strip()
-        video_id_candidates = []
-        for div in bsObj.findAll('div'):
-            if 'data-video-id' in div.attrs:
-                # video name equility can be not enough => collect all with appropriate name
-                if vid_name == div.find('span', {'class':"duration"}).parent.parent.find(text=True).strip():
-                    # video id like 'urn:li:lyndaVideo:(urn:li:lyndaCourse:5030978,2810951)'
-                    full_id_str = div['data-video-id']
-                    #vid_id = full_id_str.split(',')[-1].strip(')').strip()
-                    video_id_candidates.append(full_id_str)
-
-        for video_id in video_id_candidates:
-            for code in bsObj.findAll('code'):
-                try:
-                    code_json = json.loads(code.text)
-                    if 'included' in code_json:
-                        for item in code_json['included']:
-                            if 'transcriptStartAt' in item and video_id in item['$id']:
-                                subs.append(item)
-                except:
-                    pass
-            if subs:
-                break;
-
-        subs.sort(key=lambda x: x['transcriptStartAt'])
-
-    except KeyboardInterrupt:
-        raise
-    except Exception as ex:
-        print(f"\nException in get_raw_subtitles:", repr(ex))
-        traceback.print_exc(file=sys.stdout)
-    return subs
-
-
 def sub_format_time_from_ms(time_ms: int):
     sec, ms = divmod(time_ms, 1000)
     minutes, sec = divmod(sec, 60)
@@ -199,129 +161,168 @@ def sub_format_time_from_ms(time_ms: int):
     return f"{hours:02}:{minutes:02}:{sec:02}:{ms:03}"
 
 
-def save_subtitles(subs, file_path):
-    lines = []
-    for num, sub in enumerate(subs[:-1], start=1):
-        lines.append(str(num))
-        lines.append(f"{sub_format_time_from_ms(sub['transcriptStartAt'])} --> "
-                        f"{sub_format_time_from_ms(subs[num]['transcriptStartAt'] - 10)}")
-        lines.append(sub['caption'])
-        lines.append('')
-    # last time stamp is special
-    lines.append(f"{len(subs)}")
-    #TODO add video duration instead of hardcoded 5 sec duration
-    lines.append(f"{sub_format_time_from_ms(subs[-1]['transcriptStartAt'])} --> "
-                    f"{sub_format_time_from_ms(subs[-1]['transcriptStartAt'] + 5000)}")
-    lines.append(subs[-1]['caption'])
-    lines.append('')
-
-    save_html('\n'.join(lines), file_path)
-
-class Downloader():
+class Downloader:
     def __init__(self, web_driver):
         self.autoplay_postfix = "?autoplay=true"
         self.driver = web_driver
         self.courses = []
         self.directory_to_store = ''
+        self.exersise_tab = 'Exercise Files'
+        self.content_tab = 'Contents'
 
-    def download(self):
+    def get_raw_subtitles(html):
+        subs = []
+        try:
+            bsObj = BeautifulSoup(html, 'html.parser')
+            vid_name = bsObj.find('span', {'class':"embed-entity__video-title"}).text.strip()
+            video_id_candidates = []
+            for div in bsObj.findAll('div'):
+                if 'data-video-id' in div.attrs:
+                    # video name equility can be not enough => collect all with appropriate name
+                    if vid_name == div.find('span', {'class':"duration"}).parent.parent.find(text=True).strip():
+                        # video id like 'urn:li:lyndaVideo:(urn:li:lyndaCourse:5030978,2810951)'
+                        full_id_str = div['data-video-id']
+                        #vid_id = full_id_str.split(',')[-1].strip(')').strip()
+                        video_id_candidates.append(full_id_str)
+
+            for video_id in video_id_candidates:
+                for code in bsObj.findAll('code'):
+                    try:
+                        code_json = json.loads(code.text)
+                        if 'included' in code_json:
+                            for item in code_json['included']:
+                                if 'transcriptStartAt' in item and video_id in item['$id']:
+                                    subs.append(item)
+                    except:
+                        pass
+                if subs:
+                    break;
+
+            subs.sort(key=lambda x: x['transcriptStartAt'])
+
+        except KeyboardInterrupt:
+            raise
+        except Exception as ex:
+            print(f"\nException in get_raw_subtitles:", repr(ex))
+            traceback.print_exc(file=sys.stdout)
+        return subs
+
+    def save_subtitles(subs, file_path):
+        lines = []
+        for num, sub in enumerate(subs[:-1], start=1):
+            lines.append(str(num))
+            lines.append(f"{sub_format_time_from_ms(sub['transcriptStartAt'])} --> "
+                            f"{sub_format_time_from_ms(subs[num]['transcriptStartAt'] - 10)}")
+            lines.append(sub['caption'])
+            lines.append('')
+        # last time stamp is special
+        lines.append(f"{len(subs)}")
+        #TODO add video duration instead of hardcoded 5 sec duration
+        lines.append(f"{sub_format_time_from_ms(subs[-1]['transcriptStartAt'])} --> "
+                        f"{sub_format_time_from_ms(subs[-1]['transcriptStartAt'] + 5000)}")
+        lines.append(subs[-1]['caption'])
+        lines.append('')
+
+        save_html('\n'.join(lines), file_path)
+
+    def __download_course(self, course_url):
         driver = self.driver
-        exersise_tab = 'Exercise Files'
-        content_tab = 'Contents'
-        for course_url in self.courses:
-            try:
-                driver.get(course_url)
-                wait_for_js(driver)
-                #time.sleep(timeout_sec)
+        excepiton_happened = False
+        try:
+            driver.get(course_url)
+            wait_for_js(driver)
+            #time.sleep(timeout_sec)
 
-                save_dir = f"{self.directory_to_store}/{course_url.split('/')[-1]}"
-                check_directory(save_dir)
+            save_dir = f"{self.directory_to_store}/{course_url.split('/')[-1]}"
+            check_directory(save_dir)
 
-                chapters = None
-                tabs = driver.find_elements_by_tag_name('artdeco-tab')
-                for tab in tabs:
-                    if content_tab in tab.get_attribute('innerHTML'):
-                        tab.click()
-                        wait_for_js(driver)
-                        save_html(driver.page_source, f"{save_dir}/{content_tab}.html")
-                        chapters = get_chapters(driver.page_source)
-                    elif exersise_tab in tab.get_attribute('innerHTML'):
-                        tab.click()
-                        wait_for_js(driver)
-                        break
+            chapters = None
+            tabs = driver.find_elements_by_tag_name('artdeco-tab')
+            for tab in tabs:
+                if self.content_tab in tab.get_attribute('innerHTML'):
+                    tab.click()
+                    wait_for_js(driver)
+                    save_html(driver.page_source, f"{save_dir}/{self.content_tab}.html")
+                    chapters = get_chapters(driver.page_source)
+                elif self.exersise_tab in tab.get_attribute('innerHTML'):
+                    tab.click()
+                    wait_for_js(driver)
+                    break
 
-                elemets_a = driver.find_elements_by_tag_name('a')
-                vid_refs = []
-                exercise_refs = []
-                for a in elemets_a:
-                    href = a.get_attribute('href')
-                    if course_url in href and self.autoplay_postfix in href:
-                        vid_refs.append(href)
-                    elif '/exercises/' in href:
-                        exercise_refs.append(href)
+            elemets_a = driver.find_elements_by_tag_name('a')
+            vid_refs = []
+            exercise_refs = []
+            for a in elemets_a:
+                href = a.get_attribute('href')
+                if course_url in href and self.autoplay_postfix in href:
+                    vid_refs.append(href)
+                elif '/exercises/' in href:
+                    exercise_refs.append(href)
 
-                if exercise_refs:
-                    exersice_dir = f"{save_dir}/{exersise_tab}"
-                    check_directory(exersice_dir)
+            if exercise_refs:
+                exersice_dir = f"{save_dir}/{self.exersise_tab}"
+                check_directory(exersice_dir)
 
-                    for exercise_url in exercise_refs:
+                for exercise_url in exercise_refs:
+                    try:
+                        #print('exercise url:', exercise_url)
+                        exercise_name = file_name_from_url(exercise_url)
+                        save_path = f"{exersice_dir}/{exercise_name}"
+                        download_file(exercise_url, save_path)
+                    except KeyboardInterrupt:
+                        raise
+                    except Exception as ex:
+                        print(f"\nException during processing exercise {exercise_url}:", repr(ex))
+                        traceback.print_exc(file=sys.stdout)
+            else:
+                print(f"Warning! {file_name_from_url(course_url)} does't contains {self.exersise_tab}")
+
+            if chapters:
+                for idx, chapter in enumerate(chapters):
+                    vid_dir_name = get_valid_filename(chapter['header'])
+                    if not str.isdigit(vid_dir_name[0]):
+                        vid_dir_name = f"{idx}. {vid_dir_name}"
+                        print(f"chapter header to folder name: '{chapter['header']}' -> '{vid_dir_name}'")
+                    vid_dir_path = f"{save_dir}/{vid_dir_name}"
+                    check_directory(vid_dir_path)
+
+                    for vid_idx, vid_item in enumerate(chapter['items']):
                         try:
-                            #print('exercise url:', exercise_url)
-                            exercise_name = file_name_from_url(exercise_url)
-                            save_path = f"{exersice_dir}/{exercise_name}"
-                            download_file(exercise_url, save_path)
+                            file_name = get_valid_filename(f"{vid_item['title']}.mp4")
+                            if not str.isdigit(file_name[0]):
+                                file_name = f"{str(vid_idx+1).zfill(2)}. {file_name}"
+                            save_path = f"{vid_dir_path}/{file_name}"
+                            sub_save_path = os.path.splitext(save_path)[0] + '.srt'
+                            if os.path.exists(save_path) and os.path.exists(sub_save_path):
+                                print(f"'{vid_dir_name}/{file_name}' was already downloaded")
+                                continue
+
+                            driver.get(vid_item['ref'])
+                            wait_for_js(driver)
+                            #time.sleep(timeout_sec)
+
+                            # save video page, can be usefull for later data extration
+                            save_html(driver.page_source, os.path.splitext(save_path)[0] + '.html')
+
+                            vid_elem = driver.find_element_by_tag_name('video')
+                            vid_url = vid_elem.get_attribute('src')
+                            download_file(vid_url, save_path)
+
+                            subs = Downloader.get_raw_subtitles(driver.page_source)
+                            transcription = ' '.join([sub['caption'] for sub in subs])
+                            if transcription:
+                                save_html(transcription, os.path.splitext(save_path)[0] + '.txt')
+                            Downloader.save_subtitles(subs, sub_save_path)
                         except KeyboardInterrupt:
                             raise
                         except Exception as ex:
-                            print(f"\nException during processing exercise {exercise_url}:", repr(ex))
+                            print(f"\nException during processing video {vid_item['ref']}:", repr(ex))
                             traceback.print_exc(file=sys.stdout)
-                else:
-                    print(f"Warning! {file_name_from_url(course_url)} does't contains {exersise_tab}")
+                            excepiton_happened = True
 
-                if chapters:
-                    for idx, chapter in enumerate(chapters):
-                        vid_dir_name = get_valid_filename(chapter['header'])
-                        if not str.isdigit(vid_dir_name[0]):
-                            vid_dir_name = f"{idx}. {vid_dir_name}"
-                            print(f"chapter header to folder name: '{chapter['header']}' -> '{vid_dir_name}'")
-                        vid_dir_path = f"{save_dir}/{vid_dir_name}"
-                        check_directory(vid_dir_path)
-
-                        for vid_idx, vid_item in enumerate(chapter['items']):
-                            try:
-                                file_name = get_valid_filename(f"{vid_item['title']}.mp4")
-                                if not str.isdigit(file_name[0]):
-                                    file_name = f"{str(vid_idx+1).zfill(2)}. {file_name}"
-                                save_path = f"{vid_dir_path}/{file_name}"
-                                sub_save_path = os.path.splitext(save_path)[0] + '.srt'
-                                if os.path.exists(save_path) and os.path.exists(sub_save_path):
-                                    print(f"'{vid_dir_name}/{file_name}' was already downloaded")
-                                    continue
-
-                                driver.get(vid_item['ref'])
-                                wait_for_js(driver)
-                                #time.sleep(timeout_sec)
-
-                                # save video page, can be usefull for later data extration
-                                save_html(driver.page_source, os.path.splitext(save_path)[0] + '.html')
-
-                                vid_elem = driver.find_element_by_tag_name('video')
-                                vid_url = vid_elem.get_attribute('src')
-                                download_file(vid_url, save_path)
-
-                                subs = get_raw_subtitles(driver.page_source)
-                                transcription = ' '.join([sub['caption'] for sub in subs])
-                                save_html(transcription, os.path.splitext(save_path)[0] + '.txt')
-                                save_subtitles(subs, sub_save_path)
-                            except KeyboardInterrupt:
-                                raise
-                            except Exception as ex:
-                                print(f"\nException during processing video {vid_item['ref']}:", repr(ex))
-                                traceback.print_exc(file=sys.stdout)
-
-                    save_html(driver.page_source, f"{save_dir}/{content_tab}.html")
-                else:
-                    print(f"Warning! {file_name_from_url(course_url)} does't contains {content_tab}")
+                save_html(driver.page_source, f"{save_dir}/{self.content_tab}.html")
+            else:
+                print(f"Warning! {file_name_from_url(course_url)} does't contains {self.content_tab}")
 
 # v0.1 video saving
 #                if vid_refs:
@@ -343,11 +344,23 @@ class Downloader():
 #                    save_html(driver.page_source, f"{save_dir}/info.html")
 #                else:
 #                    print(f"Warning! {file_name_from_url(course_url)} does't contains {content_tab}")
-            except KeyboardInterrupt:
-                raise
-            except Exception as ex:
-                print(f"\nException during processing course {course_url}:", repr(ex))
-                traceback.print_exc(file=sys.stdout)
+        except KeyboardInterrupt:
+            raise
+        except Exception as ex:
+            print(f"\nException during processing course {course_url}:", repr(ex))
+            traceback.print_exc(file=sys.stdout)
+            excepiton_happened = True
+        return not excepiton_happened
+
+    def download(self):
+        for course_url in self.courses:
+            for attempt in range(3):
+                print(f"starting to download {course_url}: attempt #{attempt+1}")
+                if self.__download_course(course_url):
+                    print(f"\n**** course {course_url} is downloaded without errors ****\n")
+                    break
+            else:
+                print(f"\n^^^^ errors happened during downloading course {course_url} ^^^^\n")
 
 
 if __name__ == '__main__':
