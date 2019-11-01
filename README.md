@@ -9,9 +9,13 @@ script for downloading courses content from LinkedIn Learning
 # requirements
 python 3.5+
 
+<blockquote>
 selenium
+
 argparse
+
 bs4
+</blockquote>
 
 geckodriver.exe https://github.com/mozilla/geckodriver/releases
 
